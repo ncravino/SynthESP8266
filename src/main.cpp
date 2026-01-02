@@ -15,32 +15,28 @@
 //    along with this program.  If not, see <https://www.gnu.org/licenses/>.
  
 #include "MozziConfigValues.h"  
-#define MOZZI_OUTPUT_MODE  MOZZI_OUTPUT_PDM_VIA_SERIAL
-#define MOZZI_ANALOG_READ MOZZI_ANALOG_READ_NONE
-#define MOZZI_AUDIO_RATE 32768  
-#define MOZZI_CONTROL_RATE 128 
-
+#define MOZZI_CONTROL_RATE 256
+#define MOZZI_AUDIO_MODE  MOZZI_OUTPUT_I2S_DAC
+#define MOZZI_AUDIO_CHANNELS MOZZI_STEREO
 #include <Mozzi.h>
-#include <Oscil.h>
-
-#pragma GCC diagnostic ignored "-Wno-expansion-to-defined"
- 
 #include <MozziGuts.h>
+
 #include <Oscil.h>
 #include <tables/saw2048_int8.h> 
 #include <tables/smoothsquare8192_int8.h> 
 #include <tables/triangle2048_int8.h>
 #include <tables/brownnoise8192_int8.h>
+#include <tables/cos2048_int8.h>
 #include <ResonantFilter.h>
-#include <ReverbTank.h>
 #include <ADSR.h>
 #include <mozzi_rand.h> 
 #include <mozzi_midi.h>  
 #include <ESP8266WiFi.h>
 #include <EventDelay.h>
+#include <AudioDelay.h>
 
-Oscil<TRIANGLE2048_NUM_CELLS, AUDIO_RATE> drone; 
-ADSR<CONTROL_RATE, AUDIO_RATE> drone_env; 
+Oscil<TRIANGLE2048_NUM_CELLS, AUDIO_RATE> sub; 
+ADSR<CONTROL_RATE, AUDIO_RATE> sub_env; 
 
 Oscil<SMOOTHSQUARE8192_NUM_CELLS, AUDIO_RATE> synth1;
 ADSR<CONTROL_RATE, AUDIO_RATE> synth1_env; 
@@ -75,11 +71,11 @@ EventDelay seq_event;
 #define NO_ACTION 0
 
 char sequences[5][8] = {
-  {NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP},//drone
+  {NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP},//sub
   {NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION },//kicks
   {NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_START, NOTE_START },//hats
   {NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP }, //synth1
-  {NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NO_ACTION}, //synth2
+  {NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION}, //synth2
 };
 
 void setup() {
@@ -87,11 +83,11 @@ void setup() {
   pinMode(A0, INPUT);
   Serial.begin(115200);
 
-  seq_event.set(125); // 8 bars per sec
+  seq_event.set(125); // 125ms or 8 bars per sec
 
-  drone_env.setADLevels(220,10);
-  drone_env.setTimes(10,100,10,10);
-  drone.setTable(TRIANGLE2048_DATA);
+  sub_env.setADLevels(220,10);
+  sub_env.setTimes(10,500,10,10);
+  sub.setTable(TRIANGLE2048_DATA);
   
   synth1_env.setADLevels(220,10);
   synth1_env.setTimes(100,100,100,50);
@@ -99,7 +95,7 @@ void setup() {
   synth1_filt.setCutoffFreqAndResonance(40,3000);
   
   synth2_env.setADLevels(220,10);
-  synth2_env.setTimes(10,50,10,10);
+  synth2_env.setTimes(10,80,80,50);
   synth2.setTable(SAW2048_DATA);  
 
   kick_env.setADLevels(250,10);
@@ -107,14 +103,15 @@ void setup() {
   kicks.setTable(SMOOTHSQUARE8192_DATA);
   
   hat_env.setADLevels(240,20);
-  hat_env.setTimes(0,40,50,50);
+  hat_env.setTimes(0,40,50,30);
   hats.setTable(BROWNNOISE8192_DATA);
+  
   startMozzi(CONTROL_RATE);
 }
 
 
-void playDrone(){
-    drone.setFreq(mtof(32+24));
+void playSub(){
+    sub.setFreq(mtof(32-12));
 }
 
 uint8_t synth1_notes[] = {44, 52, 32, 37}; 
@@ -137,19 +134,20 @@ void playSynth2(){
 }
 
 void playKick(){
-    kicks.setFreq(40);
+    kicks.setFreq(50);
 }
 
 void playHat(){
     hats.setFreq(15000);
 }
 
+
 int curr_seq = 0;
 void updateControl() {
   readA0();
   synth1_filt.setCutoffFreqAndResonance(last_a0_val,48000);
 
-  drone_env.update();
+  sub_env.update();
   kick_env.update();
   hat_env.update();
   synth1_env.update();
@@ -157,10 +155,10 @@ void updateControl() {
   
   if(seq_event.ready()){
     if(sequences[DRONETRACK][curr_seq]==NOTE_START){
-      playDrone();
-      drone_env.noteOn();
+      playSub();
+      sub_env.noteOn();
     }else if(sequences[DRONETRACK][curr_seq]==NOTE_STOP){
-      drone_env.noteOff();
+      sub_env.noteOff();
     }
 
     if(sequences[KICKTRACK][curr_seq]==NOTE_START){
@@ -197,16 +195,21 @@ void updateControl() {
 
 
 AudioOutput updateAudio(){
-  int16_t sample = 0;
 
-  int16_t s1sig = synth1_filt.next(synth1.next()*synth1_env.next())>>2;
-  int16_t s2sig = (synth2.next()*synth2_env.next())>>2;
-  int16_t dronsig = (drone_env.next() * drone.next())>>2; 
-  int16_t dsig = (kick_env.next() * kicks.next())>>2;
-  int16_t hsig = (hat_env.next() * hats.next())>>2;
-  sample = (dsig + hsig + dronsig + s1sig + s2sig);
+  int16_t s1sig = synth1_filt.next(synth1.next()*synth1_env.next());
+  int16_t s2sig = (synth2.next()*synth2_env.next());
+  int16_t dronsig = (sub_env.next() * sub.next()); 
+  int16_t dsig = (kick_env.next() * kicks.next());
+  int16_t hsig = (hat_env.next() * hats.next());
+  int16_t mono_part = (dronsig + dsig)>>2;
   
-  return MonoOutput::from16Bit(sample).clip();
+  int16_t l_part = hsig;
+  int16_t r_part = (s1sig + s2sig);
+
+  // use different volume to test if stereo is working
+  int16_t l_sample = mono_part + (l_part>>2) + (r_part>>3);
+  int16_t r_sample = mono_part + (r_part>>2) + (l_part>>3);
+  return StereoOutput::from16Bit(l_sample, r_sample).clip();
 }
 
 
