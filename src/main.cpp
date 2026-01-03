@@ -15,7 +15,7 @@
 //    along with this program.  If not, see <https://www.gnu.org/licenses/>.
  
 #include "MozziConfigValues.h"  
-#define MOZZI_CONTROL_RATE 256
+#define MOZZI_CONTROL_RATE 1024
 #define MOZZI_AUDIO_MODE  MOZZI_OUTPUT_I2S_DAC
 #define MOZZI_AUDIO_CHANNELS MOZZI_STEREO
 #include <Mozzi.h>
@@ -33,14 +33,20 @@
 #include <mozzi_midi.h>  
 #include <ESP8266WiFi.h>
 #include <EventDelay.h>
-#include <AudioDelay.h>
+#include <AudioDelayFeedback.h>
 
-Oscil<TRIANGLE2048_NUM_CELLS, AUDIO_RATE> sub; 
+Oscil<TRIANGLE2048_NUM_CELLS, AUDIO_RATE> sub1; 
+Oscil<TRIANGLE2048_NUM_CELLS, AUDIO_RATE> sub2; 
 ADSR<CONTROL_RATE, AUDIO_RATE> sub_env; 
 
+#define SYNTH1_DEL_SAMPS 4096
+#define HALF_SYNTH1_DEL_SAMPS 2047 //0-2047 = 2048 samps
 Oscil<SMOOTHSQUARE8192_NUM_CELLS, AUDIO_RATE> synth1;
 ADSR<CONTROL_RATE, AUDIO_RATE> synth1_env; 
 ResonantFilter<LOWPASS> synth1_filt;
+AudioDelayFeedback<SYNTH1_DEL_SAMPS, LINEAR, int16_t> synth1_del;
+Oscil<COS2048_NUM_CELLS, AUDIO_RATE> synth1_del_osc;
+
 
 Oscil<SAW2048_NUM_CELLS, AUDIO_RATE> synth2;
 ADSR<CONTROL_RATE, AUDIO_RATE> synth2_env; 
@@ -58,7 +64,7 @@ uint16_t last_a0_val=0;
 
 void readA0(){
   int read_val = analogRead(A0);
-  last_a0_val = (read_val/1024.0)*256;
+  last_a0_val = (read_val/1024.0)*255.0;
 }
 
 EventDelay seq_event; 
@@ -81,8 +87,8 @@ char sequences[INST_NUM][SEQ_LEN] = {
   {NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP, NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP,
   NOTE_START, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NOTE_STOP},//sub
 
-  {NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION,
-  NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION },//kicks
+  {NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION,
+  NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION },//kicks
   
   {NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP,
   NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP },//hats1
@@ -91,10 +97,10 @@ char sequences[INST_NUM][SEQ_LEN] = {
   NO_ACTION, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NO_ACTION },//hats2
   
   {NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP,
-  NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP }, //synth1
+  NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP },//synth1
   
   {NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION,
-  NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION}, //synth2
+  NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NOTE_START, NOTE_STOP}, //synth2
 };
 
 void setup() {
@@ -103,21 +109,25 @@ void setup() {
   Serial.begin(115200);
   seq_event.set(125); // 125ms or 8 bars per sec
 
-  sub_env.setADLevels(220,10);
-  sub_env.setTimes(10,500,10,10);
-  sub.setTable(TRIANGLE2048_DATA);
+  sub_env.setADLevels(250,10);
+  sub_env.setTimes(10,500,500,400);
+  sub1.setTable(TRIANGLE2048_DATA);
+  sub2.setTable(TRIANGLE2048_DATA);
   
   synth1_env.setADLevels(220,10);
   synth1_env.setTimes(100,100,100,50);
   synth1.setTable(SMOOTHSQUARE8192_DATA);  
   synth1_filt.setCutoffFreqAndResonance(40,80);
-  
+  synth1_del.setFeedbackLevel(25);
+  synth1_del_osc.setTable(COS2048_DATA);
+  synth1_del_osc.setFreq(0.2f);
+
   synth2_env.setADLevels(220,10);
   synth2_env.setTimes(10,80,80,50);
   synth2.setTable(SAW2048_DATA);  
 
-  kick_env.setADLevels(250,10);
-  kick_env.setTimes(0,30,20,10);
+  kick_env.setADLevels(250,15);
+  kick_env.setTimes(0,20,50,60);
   kicks.setTable(SMOOTHSQUARE8192_DATA);
   
   hat1_env.setADLevels(240,20);
@@ -133,7 +143,8 @@ void setup() {
 
 
 void playSub(){
-    sub.setFreq(mtof(32-8));
+    sub1.setFreq(mtof(32));
+    sub2.setFreq(mtof(32)-15);
 }
 
 uint8_t synth1_notes[] = {44, 52, 32, 37}; 
@@ -169,10 +180,11 @@ void playHat2(){
 
 
 int curr_seq = 0;
+uint16_t synth1_del_samp = 0;
 void updateControl() {
-  
+  synth1_del_samp = HALF_SYNTH1_DEL_SAMPS+(synth1_del_osc.next()*4);
   readA0();
-  synth1_filt.setCutoffFreqAndResonance(last_a0_val,100);
+  synth1_filt.setCutoffFreqAndResonance(100, last_a0_val);
 
   sub_env.update();
   kick_env.update();
@@ -230,22 +242,24 @@ void updateControl() {
 
 
 AudioOutput updateAudio(){
-
-  
-  int16_t subsig = (sub_env.next() * sub.next());   
+   
+  unsigned char subenvsig = sub_env.next();
+  int16_t subsigl = ( subenvsig * sub1.next() );   
+  int16_t subsigr = ( subenvsig * sub2.next() );   
   int16_t dsig = (kick_env.next() * kicks.next());
   
   int16_t s1sig = synth1_filt.next(synth1.next()*synth1_env.next());
+  s1sig =  s1sig + (synth1_del.next(s1sig, synth1_del_samp)>>2);
   int16_t s2sig = (synth2.next()*synth2_env.next());
   int16_t synsigs = (s1sig + s2sig);
 
-  int16_t mono_part = (subsig + dsig + synsigs)>>2;
+  int16_t mono_part = (dsig + synsigs)>>2;
 
   int16_t h1sig = (hat1_env.next() * hats1.next());  
   int16_t h2sig = (hat2_env.next() * hats2.next());  
 
-  int16_t l_sample = mono_part + (h1sig>>2);
-  int16_t r_sample = mono_part + (h2sig>>2);
+  int16_t l_sample = mono_part + (h1sig>>2)+(subsigl>>2);
+  int16_t r_sample = mono_part + (h2sig>>2)+(subsigr>>2);
 
   return StereoOutput::from16Bit(l_sample<<1, r_sample<<1).clip();
 }
