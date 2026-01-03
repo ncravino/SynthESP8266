@@ -2,6 +2,12 @@
 
 This code implements a very simple event sequencer and "instruments" to test the [Mozzi library](https://github.com/sensorium/Mozzi) with a I2S DAC, and also play with stereo and polyphony.
 
+## Notes 
+
+- Beware of using speakers or headphones when testing new things, it's very easy to make very loud/harsh/high pitch sounds, especially if amplified: I used a small pc speaker for this.
+- Also ensure your hardware connections are correct to avoid damaging any equipment.
+- You may need to add a capacitor to reduce noise when using PWM.
+
 ## Context
 
 I used a WeMos D1 mini board with sound output on a PCM5102 I2S DAC (note: I2S != I2C).
@@ -44,6 +50,17 @@ Leave unconnected any other pins on the PCM5102 board.
 
 ![Wiring Diagram](wiring.png)
 
-## License 
+## Licenses
 
-AGPL-3.0-or-later see [License](./LICENSE).
+### Code:
+- AGPL 3.0 or later, see [License](./LICENSE)
+
+### Everything Else:
+- Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International, see [CC BY-NC-SA](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+
+## Helpful Resources Used
+
+- [Artium Nihamkin - PCM audio on esp8266 using the PCM5102 chip](http://www.nihamkin.com/pcm-audio-on-esp8266-using-the-pcm5102-chip.html)
+- [Last Minute Engineers - WeMos D1 Pin Out Reference](https://lastminuteengineers.com/wemos-d1-mini-pinout-reference/)
+- [todbot - Mozzi Experiments](https://github.com/todbot/mozzi_experiments)
+- [Mozzi Documentation](https://sensorium.github.io/Mozzi/doc/html/hardware_esp8266.html)
