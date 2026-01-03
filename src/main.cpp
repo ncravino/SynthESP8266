@@ -40,7 +40,7 @@ ADSR<CONTROL_RATE, AUDIO_RATE> sub_env;
 
 Oscil<SMOOTHSQUARE8192_NUM_CELLS, AUDIO_RATE> synth1;
 ADSR<CONTROL_RATE, AUDIO_RATE> synth1_env; 
-ResonantFilter<LOWPASS, uint16_t> synth1_filt;
+ResonantFilter<LOWPASS> synth1_filt;
 
 Oscil<SAW2048_NUM_CELLS, AUDIO_RATE> synth2;
 ADSR<CONTROL_RATE, AUDIO_RATE> synth2_env; 
@@ -48,41 +48,59 @@ ADSR<CONTROL_RATE, AUDIO_RATE> synth2_env;
 Oscil<SMOOTHSQUARE8192_NUM_CELLS, AUDIO_RATE> kicks; 
 ADSR<CONTROL_RATE, AUDIO_RATE> kick_env; 
 
-Oscil<BROWNNOISE8192_NUM_CELLS, AUDIO_RATE> hats; 
-ADSR<CONTROL_RATE, AUDIO_RATE> hat_env; 
+Oscil<BROWNNOISE8192_NUM_CELLS, AUDIO_RATE> hats1; 
+ADSR<CONTROL_RATE, AUDIO_RATE> hat1_env; 
+
+Oscil<BROWNNOISE8192_NUM_CELLS, AUDIO_RATE> hats2; 
+ADSR<CONTROL_RATE, AUDIO_RATE> hat2_env; 
 
 uint16_t last_a0_val=0;
 
 void readA0(){
   int read_val = analogRead(A0);
-  last_a0_val = (read_val*64)-1;
+  last_a0_val = (read_val/1024.0)*256;
 }
 
 EventDelay seq_event; 
 
 #define DRONETRACK 0
 #define KICKTRACK 1
-#define HATTRACK 2
-#define SYNTH1TRACK 3
-#define SYNTH2TRACK 4
+#define HAT1TRACK 2
+#define HAT2TRACK 3
+#define SYNTH1TRACK 4
+#define SYNTH2TRACK 5
 
 #define NOTE_START 1
 #define NOTE_STOP 2
 #define NO_ACTION 0
 
-char sequences[5][8] = {
-  {NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP},//sub
-  {NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION },//kicks
-  {NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_START, NOTE_START },//hats
-  {NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP }, //synth1
-  {NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION}, //synth2
+#define INST_NUM 6
+#define SEQ_LEN 16
+
+char sequences[INST_NUM][SEQ_LEN] = {
+  {NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP, NOTE_START, NO_ACTION, NO_ACTION, NOTE_STOP,
+  NOTE_START, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NOTE_STOP},//sub
+
+  {NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION,
+  NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION, NO_ACTION },//kicks
+  
+  {NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP,
+  NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP },//hats1
+  
+  {NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION, NO_ACTION, NOTE_START, NOTE_STOP, NO_ACTION,
+  NO_ACTION, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP, NO_ACTION },//hats2
+  
+  {NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP,
+  NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NOTE_START, NOTE_STOP, NOTE_START, NOTE_STOP }, //synth1
+  
+  {NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION,
+  NO_ACTION, NO_ACTION, NO_ACTION, NOTE_START, NO_ACTION, NOTE_STOP, NO_ACTION, NO_ACTION}, //synth2
 };
 
 void setup() {
   WiFi.mode(WIFI_OFF);
   pinMode(A0, INPUT);
   Serial.begin(115200);
-
   seq_event.set(125); // 125ms or 8 bars per sec
 
   sub_env.setADLevels(220,10);
@@ -92,7 +110,7 @@ void setup() {
   synth1_env.setADLevels(220,10);
   synth1_env.setTimes(100,100,100,50);
   synth1.setTable(SMOOTHSQUARE8192_DATA);  
-  synth1_filt.setCutoffFreqAndResonance(40,3000);
+  synth1_filt.setCutoffFreqAndResonance(40,80);
   
   synth2_env.setADLevels(220,10);
   synth2_env.setTimes(10,80,80,50);
@@ -102,16 +120,20 @@ void setup() {
   kick_env.setTimes(0,30,20,10);
   kicks.setTable(SMOOTHSQUARE8192_DATA);
   
-  hat_env.setADLevels(240,20);
-  hat_env.setTimes(0,40,50,30);
-  hats.setTable(BROWNNOISE8192_DATA);
+  hat1_env.setADLevels(240,20);
+  hat1_env.setTimes(0,40,50,30);
+  hats1.setTable(BROWNNOISE8192_DATA);
   
+  hat2_env.setADLevels(240,20);
+  hat2_env.setTimes(0,40,50,30);
+  hats2.setTable(BROWNNOISE8192_DATA);
+
   startMozzi(CONTROL_RATE);
 }
 
 
 void playSub(){
-    sub.setFreq(mtof(32-12));
+    sub.setFreq(mtof(32-8));
 }
 
 uint8_t synth1_notes[] = {44, 52, 32, 37}; 
@@ -137,19 +159,25 @@ void playKick(){
     kicks.setFreq(50);
 }
 
-void playHat(){
-    hats.setFreq(15000);
+void playHat1(){
+    hats1.setFreq(15000);
+}
+
+void playHat2(){
+    hats2.setFreq(8000);
 }
 
 
 int curr_seq = 0;
 void updateControl() {
+  
   readA0();
-  synth1_filt.setCutoffFreqAndResonance(last_a0_val,48000);
+  synth1_filt.setCutoffFreqAndResonance(last_a0_val,100);
 
   sub_env.update();
   kick_env.update();
-  hat_env.update();
+  hat1_env.update();
+  hat2_env.update();
   synth1_env.update();
   synth2_env.update();
   
@@ -168,11 +196,18 @@ void updateControl() {
       kick_env.noteOff();
     }
 
-    if(sequences[HATTRACK][curr_seq]==NOTE_START){
-      playHat();
-      hat_env.noteOn();
-    }else if(sequences[HATTRACK][curr_seq]==NOTE_STOP){
-      hat_env.noteOff();
+    if(sequences[HAT1TRACK][curr_seq]==NOTE_START){
+      playHat1();
+      hat1_env.noteOn();
+    }else if(sequences[HAT1TRACK][curr_seq]==NOTE_STOP){
+      hat1_env.noteOff();
+    }
+
+    if(sequences[HAT2TRACK][curr_seq]==NOTE_START){
+      playHat2();
+      hat2_env.noteOn();
+    }else if(sequences[HAT2TRACK][curr_seq]==NOTE_STOP){
+      hat2_env.noteOff();
     }
 
     if(sequences[SYNTH1TRACK][curr_seq]==NOTE_START){
@@ -188,7 +223,7 @@ void updateControl() {
     }else if(sequences[SYNTH2TRACK][curr_seq]==NOTE_STOP){
       synth2_env.noteOff();
     }    
-    curr_seq=(curr_seq+1)%8;
+    curr_seq=(curr_seq+1)%SEQ_LEN;
     seq_event.start();
   }
 }
@@ -196,20 +231,23 @@ void updateControl() {
 
 AudioOutput updateAudio(){
 
+  
+  int16_t subsig = (sub_env.next() * sub.next());   
+  int16_t dsig = (kick_env.next() * kicks.next());
+  
   int16_t s1sig = synth1_filt.next(synth1.next()*synth1_env.next());
   int16_t s2sig = (synth2.next()*synth2_env.next());
-  int16_t dronsig = (sub_env.next() * sub.next()); 
-  int16_t dsig = (kick_env.next() * kicks.next());
-  int16_t hsig = (hat_env.next() * hats.next());
-  int16_t mono_part = (dronsig + dsig)>>2;
-  
-  int16_t l_part = hsig;
-  int16_t r_part = (s1sig + s2sig);
+  int16_t synsigs = (s1sig + s2sig);
 
-  // use different volume to test if stereo is working
-  int16_t l_sample = mono_part + (l_part>>2) + (r_part>>3);
-  int16_t r_sample = mono_part + (r_part>>2) + (l_part>>3);
-  return StereoOutput::from16Bit(l_sample, r_sample).clip();
+  int16_t mono_part = (subsig + dsig + synsigs)>>2;
+
+  int16_t h1sig = (hat1_env.next() * hats1.next());  
+  int16_t h2sig = (hat2_env.next() * hats2.next());  
+
+  int16_t l_sample = mono_part + (h1sig>>2);
+  int16_t r_sample = mono_part + (h2sig>>2);
+
+  return StereoOutput::from16Bit(l_sample<<1, r_sample<<1).clip();
 }
 
 
