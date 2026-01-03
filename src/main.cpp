@@ -127,7 +127,7 @@ void setup() {
   synth2.setTable(SAW2048_DATA);  
 
   kick_env.setADLevels(250,15);
-  kick_env.setTimes(0,20,50,60);
+  kick_env.setTimes(0,40,40,0);
   kicks.setTable(SMOOTHSQUARE8192_DATA);
   
   hat1_env.setADLevels(240,20);
@@ -147,13 +147,14 @@ void playSub(){
     sub2.setFreq(mtof(32)-15);
 }
 
-uint8_t synth1_notes[] = {44, 52, 32, 37}; 
+uint8_t synth1_notes[] = {44, 52, 32, 37,
+                          44, 55, 32, 37}; 
 int last_synth1_note = 0;
 void playSynth1(){
     int f = mtof(synth1_notes[last_synth1_note]);    
     synth1.setFreq(f);    
     
-    last_synth1_note = (last_synth1_note + 1)%4;
+    last_synth1_note = (last_synth1_note + 1)%8;
 }
 
 
